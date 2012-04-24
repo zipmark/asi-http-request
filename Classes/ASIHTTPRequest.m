@@ -3667,9 +3667,31 @@ static NSOperationQueue *sharedQueue = nil;
 		SecTrustRef trust = NULL;
 		CFArrayRef streamCertificates =
 			(CFArrayRef)[readStream propertyForKey:(NSString*)kCFStreamPropertySSLPeerCertificates];
+        
+         // MOFIX - This is where we retrieve the certificates for the connection
 		SecTrustCreateWithCertificates(streamCertificates,
 																	 policy,
 																	 &trust);
+        
+        // Diagnostics
+        CFIndex streamCertCount = SecTrustGetCertificateCount(trust);
+        for (CFIndex i = 0; i < streamCertCount; i++) {
+            SecCertificateRef streamCert = SecTrustGetCertificateAtIndex(trust, i);
+            NSData *certificateData = CFBridgingRelease(SecCertificateCopyData(streamCert));
+            //NSData *spkiData = [certificateData dataForX509CertificateSubjectPublicKeyInfo];
+            
+            NSLog(@"stream: %@\n\npackage: %@", certificateData, caCertificate);
+            
+            //            if ([trustedCertificateIdentities containsObject:spkiData])
+            //            {
+            //                proceed = YES;
+            //                break;
+            //            }
+            
+        }
+        
+
+        // MOFIX - This is where we ask whether the caCertificate is among those for the connection
 		SecTrustSetAnchorCertificates(trust, (CFArrayRef)[NSArray arrayWithObject:(id) caCertificate]);
 		SecTrustResultType trustResultType = kSecTrustResultInvalid;
 		OSStatus status = SecTrustEvaluate(trust, &trustResultType);
