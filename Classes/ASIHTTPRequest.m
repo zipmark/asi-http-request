@@ -3659,11 +3659,13 @@ static NSOperationQueue *sharedQueue = nil;
 
 - (BOOL)checkCaCertificate
 {
-	BOOL success = NO;
+	BOOL success = YES;
+    
 	if (([[[[self url] scheme] lowercaseString] isEqualToString:@"https"]) && 
 			(caCertificate) && 
 			(![self caCertificateCheckComplete]))
 	{
+        success = NO;
         
         // Retrieve the certificates for the connection
         CFArrayRef streamCertificates = (CFArrayRef)[readStream propertyForKey:(NSString*)kCFStreamPropertySSLPeerCertificates];
@@ -3686,12 +3688,8 @@ static NSOperationQueue *sharedQueue = nil;
                 break;
             }
             
-            // Enable this when we extract PKI data
-            //            if ([trustedCertificateIdentities containsObject:spkiData])
-            //            {
-            //                proceed = YES;
-            //                break;
-            //            }
+            // This is the style of test when we start looking at multiple trusted CAs
+            // if ([trustedCertificateIdentities containsObject:spkiData])
             
         }
         
@@ -3705,6 +3703,7 @@ static NSOperationQueue *sharedQueue = nil;
         
 		[self setCaCertificateCheckComplete:YES];
 	}
+
 	return success;
 }
 
