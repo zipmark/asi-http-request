@@ -22,6 +22,7 @@
 #import "ASIInputStream.h"
 #import "ASIDataDecompressor.h"
 #import "ASIDataCompressor.h"
+#import "XBDERDecoder.h"
 
 // Automatically set on build
 NSString *ASIHTTPRequestVersion = @"v1.8.1-61 2011-09-19";
@@ -348,7 +349,7 @@ static NSOperationQueue *sharedQueue = nil;
 		CFRelease(clientCertificateIdentity);
 	}
 	if (caCertificate) {
-		CFRelease(caCertificate);
+		[caCertificate release];
 	}
 	[self cancelLoad];
 	[redirectURL release];
@@ -3658,30 +3659,34 @@ static NSOperationQueue *sharedQueue = nil;
 
 - (BOOL)checkCaCertificate
 {
-	BOOL success = YES;
+	BOOL success = NO;
 	if (([[[[self url] scheme] lowercaseString] isEqualToString:@"https"]) && 
 			(caCertificate) && 
 			(![self caCertificateCheckComplete]))
 	{
+        
+        // Retrieve the certificates for the connection
+        CFArrayRef streamCertificates = (CFArrayRef)[readStream propertyForKey:(NSString*)kCFStreamPropertySSLPeerCertificates];
 		SecPolicyRef policy = SecPolicyCreateSSL(NO, (CFStringRef)[[self url] host]);
 		SecTrustRef trust = NULL;
-		CFArrayRef streamCertificates =
-			(CFArrayRef)[readStream propertyForKey:(NSString*)kCFStreamPropertySSLPeerCertificates];
+		SecTrustCreateWithCertificates(streamCertificates, policy, &trust);
         
-         // MOFIX - This is where we retrieve the certificates for the connection
-		SecTrustCreateWithCertificates(streamCertificates,
-																	 policy,
-																	 &trust);
-        
-        // Diagnostics
+        // Check that our trusted cert is in the list of certs from the connection
         CFIndex streamCertCount = SecTrustGetCertificateCount(trust);
         for (CFIndex i = 0; i < streamCertCount; i++) {
             SecCertificateRef streamCert = SecTrustGetCertificateAtIndex(trust, i);
             NSData *certificateData = CFBridgingRelease(SecCertificateCopyData(streamCert));
-            //NSData *spkiData = [certificateData dataForX509CertificateSubjectPublicKeyInfo];
+            NSData *spkiData = [certificateData dataForX509CertificateSubjectPublicKeyInfo];
+            NSData *trustedSpkiData = [caCertificate dataForX509CertificateSubjectPublicKeyInfo];
             
-            NSLog(@"stream: %@\n\npackage: %@", certificateData, caCertificate);
+            //NSLog(@"\npki-stream:\n%@\n\nstream:\n%@\n\npki-package:\n%@\n\npackage:\n%@", spkiData, certificateData, trustedSpkiData, caCertificate);
+            if([spkiData isEqualToData:trustedSpkiData]) {
+                NSLog(@"Subject Public Key Info matches trusted source. SSL can proceed.");
+                success = YES;
+                break;
+            }
             
+            // Enable this when we extract PKI data
             //            if ([trustedCertificateIdentities containsObject:spkiData])
             //            {
             //                proceed = YES;
@@ -3690,26 +3695,14 @@ static NSOperationQueue *sharedQueue = nil;
             
         }
         
-
-        // MOFIX - This is where we ask whether the caCertificate is among those for the connection
-		SecTrustSetAnchorCertificates(trust, (CFArrayRef)[NSArray arrayWithObject:(id) caCertificate]);
-		SecTrustResultType trustResultType = kSecTrustResultInvalid;
-		OSStatus status = SecTrustEvaluate(trust, &trustResultType);
-		if ((status != errSecSuccess) || (trustResultType != kSecTrustResultUnspecified)) 
-		{
-			NSString *reason = @"A connection failure occurred: SSL problem (certificate failed check against user assigned ca)";
-			[self cancelLoad];
-			[self failWithError:[NSError errorWithDomain:NetworkRequestErrorDomain 
-																	 code:ASIConnectionFailureErrorType 
-																	 userInfo:[NSDictionary dictionaryWithObjectsAndKeys:reason,NSLocalizedDescriptionKey,nil]]];
-			success = NO;
-		}
+        // Clean up
 		if (trust) {
 			CFRelease(trust);
 		}
 		if (policy) {
 			CFRelease(policy);
 		}
+        
 		[self setCaCertificateCheckComplete:YES];
 	}
 	return success;
@@ -4201,15 +4194,15 @@ static NSOperationQueue *sharedQueue = nil;
 
 #pragma mark ca certificate
 
-- (void)setCaCertificate:(SecCertificateRef)aCaCertificate {
+- (void)setCaCertificate:(NSData *)aCaCertificate {
     if(caCertificate) {
-        CFRelease(caCertificate);
+        [caCertificate release];
     }
     
     caCertificate = aCaCertificate;
     
 	if (caCertificate) {
-		CFRetain(caCertificate);
+		[caCertificate retain];
 	}
 }
 
