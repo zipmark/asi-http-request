@@ -348,8 +348,8 @@ static NSOperationQueue *sharedQueue = nil;
 	if (clientCertificateIdentity) {
 		CFRelease(clientCertificateIdentity);
 	}
-	if (caCertificate) {
-		[caCertificate release];
+	if (trustedCerts) {
+		[trustedCerts release];
 	}
 	[self cancelLoad];
 	[redirectURL release];
@@ -1217,10 +1217,10 @@ static NSOperationQueue *sharedQueue = nil;
 			NSMutableDictionary *sslProperties = [NSMutableDictionary dictionaryWithCapacity:1];
 			
 			// Tell CFNetwork not to validate SSL certificates
-			if ((!validatesSecureCertificate) || (caCertificate))
+			if ((!validatesSecureCertificate) || (trustedCerts))
 			{
 				[sslProperties setObject:[NSNumber numberWithBool:NO] forKey:(NSString *)kCFStreamSSLValidatesCertificateChain];
-				if (caCertificate)
+				if (trustedCerts)
 				{
 					[self setCaCertificateCheckComplete:NO];
 				}
@@ -1644,7 +1644,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[headRequest setUseHTTPVersionOne:[self useHTTPVersionOne]];
 	[headRequest setValidatesSecureCertificate:[self validatesSecureCertificate]];
     [headRequest setClientCertificateIdentity:clientCertificateIdentity];
-    [headRequest setCaCertificate:caCertificate];
+    [headRequest setTrustedCertificates:trustedCerts];
 	[headRequest setClientCertificates:[[clientCertificates copy] autorelease]];
 	[headRequest setPACurl:[self PACurl]];
 	[headRequest setShouldPresentCredentialsBeforeChallenge:[self shouldPresentCredentialsBeforeChallenge]];
@@ -3662,7 +3662,7 @@ static NSOperationQueue *sharedQueue = nil;
 	BOOL success = YES;
     
 	if (([[[[self url] scheme] lowercaseString] isEqualToString:@"https"]) && 
-			(caCertificate) && 
+			(trustedCerts) && 
 			(![self caCertificateCheckComplete]))
 	{
         success = NO;
@@ -3678,18 +3678,12 @@ static NSOperationQueue *sharedQueue = nil;
         for (CFIndex i = 0; i < streamCertCount; i++) {
             SecCertificateRef streamCert = SecTrustGetCertificateAtIndex(trust, i);
             NSData *certificateData = CFBridgingRelease(SecCertificateCopyData(streamCert));
-            NSData *spkiData = [certificateData dataForX509CertificateSubjectPublicKeyInfo];
-            NSData *trustedSpkiData = [caCertificate dataForX509CertificateSubjectPublicKeyInfo];
-            
-            //NSLog(@"\npki-stream:\n%@\n\nstream:\n%@\n\npki-package:\n%@\n\npackage:\n%@", spkiData, certificateData, trustedSpkiData, caCertificate);
-            if([spkiData isEqualToData:trustedSpkiData]) {
-                NSLog(@"Subject Public Key Info matches trusted source. SSL can proceed.");
+
+            if([trustedCerts containsObject:certificateData]) {
+                NSLog(@"Certificate matches a trusted source. SSL can proceed.");
                 success = YES;
                 break;
             }
-            
-            // This is the style of test when we start looking at multiple trusted CAs
-            // if ([trustedCertificateIdentities containsObject:spkiData])
             
         }
         
@@ -3704,6 +3698,8 @@ static NSOperationQueue *sharedQueue = nil;
 		[self setCaCertificateCheckComplete:YES];
 	}
 
+    if(!success) NSLog(@"Certificate doen't match any trusted source. SSL DENIED!");
+    
 	return success;
 }
 
@@ -4151,7 +4147,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[newRequest setShouldRedirect:[self shouldRedirect]];
 	[newRequest setValidatesSecureCertificate:[self validatesSecureCertificate]];
     [newRequest setClientCertificateIdentity:clientCertificateIdentity];
-    [newRequest setCaCertificate:caCertificate];
+    [newRequest setTrustedCertificates:trustedCerts];
 	[newRequest setClientCertificates:[[clientCertificates copy] autorelease]];
 	[newRequest setPACurl:[self PACurl]];
 	[newRequest setShouldPresentCredentialsBeforeChallenge:[self shouldPresentCredentialsBeforeChallenge]];
@@ -4193,15 +4189,15 @@ static NSOperationQueue *sharedQueue = nil;
 
 #pragma mark ca certificate
 
-- (void)setCaCertificate:(NSData *)aCaCertificate {
-    if(caCertificate) {
-        [caCertificate release];
+- (void)setTrustedCertificates:(NSSet *)certs {
+    if(trustedCerts) {
+        [trustedCerts release];
     }
     
-    caCertificate = aCaCertificate;
+    trustedCerts = certs;
     
-	if (caCertificate) {
-		[caCertificate retain];
+	if (trustedCerts) {
+		[trustedCerts retain];
 	}
 }
 

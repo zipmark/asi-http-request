@@ -372,7 +372,7 @@ typedef void (^ASIDataBlock)(NSData *data);
 	NSArray *clientCertificates;
 	
     // If not nil and the URL scheme is https, CFNetwork configured to check server certificates with ONLY this CA certificate
-    NSData *caCertificate;
+    NSSet *trustedCerts;
 
 	// Details on the proxy to use - you could set these yourself, but it's probably best to let ASIHTTPRequest detect the system proxy settings
 	NSString *proxyHost;
@@ -764,7 +764,7 @@ typedef void (^ASIDataBlock)(NSData *data);
 
 #pragma mark ca certificate
 
-- (void)setCaCertificate:(NSData *)aCaCertificate;
+- (void)setTrustedCertificates:(NSSet *)trustedCerts;
 
 #pragma mark session credentials
 
