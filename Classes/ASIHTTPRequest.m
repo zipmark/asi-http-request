@@ -22,7 +22,9 @@
 #import "ASIInputStream.h"
 #import "ASIDataDecompressor.h"
 #import "ASIDataCompressor.h"
-#import "XBDERDecoder.h"
+#include "openssl/x509.h"
+#import <CommonCrypto/CommonDigest.h>
+
 
 // Automatically set on build
 NSString *ASIHTTPRequestVersion = @"v1.8.1-61 2011-09-19";
@@ -348,8 +350,8 @@ static NSOperationQueue *sharedQueue = nil;
 	if (clientCertificateIdentity) {
 		CFRelease(clientCertificateIdentity);
 	}
-	if (trustedCerts) {
-		[trustedCerts release];
+	if (trustedPublicKeyFingerPrints) {
+		[trustedPublicKeyFingerPrints release];
 	}
 	[self cancelLoad];
 	[redirectURL release];
@@ -368,6 +370,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[fileDownloadOutputStream release];
 	[inflatedFileDownloadOutputStream release];
 	[username release];
+    
 	[password release];
 	[domain release];
 	[authenticationRealm release];
@@ -1227,7 +1230,7 @@ static NSOperationQueue *sharedQueue = nil;
 				[sslProperties setObject:[NSNumber numberWithBool:YES] forKey:(NSString *)kCFStreamSSLValidatesCertificateChain];
                 [sslProperties setObject:[NSNumber numberWithBool:NO] forKey:(NSString *)kCFStreamSSLAllowsExpiredCertificates];
                 
-				if (trustedCerts)
+				if (trustedPublicKeyFingerPrints)
 				{
 					[self setCaCertificateCheckComplete:NO];
 				}
@@ -1647,7 +1650,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[headRequest setUseHTTPVersionOne:[self useHTTPVersionOne]];
 	[headRequest setValidatesSecureCertificate:[self validatesSecureCertificate]];
     [headRequest setClientCertificateIdentity:clientCertificateIdentity];
-    [headRequest setTrustedCertificates:trustedCerts];
+    [headRequest setTrustedPublicKeyFingerprints:trustedPublicKeyFingerPrints];
 	[headRequest setClientCertificates:[[clientCertificates copy] autorelease]];
 	[headRequest setPACurl:[self PACurl]];
 	[headRequest setShouldPresentCredentialsBeforeChallenge:[self shouldPresentCredentialsBeforeChallenge]];
@@ -3660,12 +3663,37 @@ static NSOperationQueue *sharedQueue = nil;
 	return NO;
 }
 
++ (NSData *)certificateGeSubjectPublicKeyInfo:(X509 *)certificateX509
+{
+    NSData *SubjectPublicKeyInfo = nil;
+    if (certificateX509 != NULL) {
+        EVP_PKEY *pubkey = X509_get_pubkey(certificateX509);
+        
+        if (pubkey != NULL) {
+            if(EVP_PKEY_type(pubkey->type) == EVP_PKEY_RSA) {
+                if(pubkey->pkey.rsa != NULL) {
+                    if(pubkey->pkey.rsa->n != NULL) {
+                        int keybytes = BN_num_bytes(pubkey->pkey.rsa->n);
+                        unsigned char *key = (unsigned char *)malloc (keybytes);
+                        int len = BN_bn2bin (pubkey->pkey.rsa->n, (unsigned char *) key);
+                        SubjectPublicKeyInfo = [NSData dataWithBytes:key length:len];
+                        free(key);
+                        EVP_PKEY_free(pubkey);
+                    }
+                }
+            }
+        }
+    }
+    
+    return SubjectPublicKeyInfo;
+}
+
 - (BOOL)checkCaCertificate
 {
 	BOOL success = YES;
     
 	if (([[[[self url] scheme] lowercaseString] isEqualToString:@"https"]) && 
-			(trustedCerts) && 
+			(trustedPublicKeyFingerPrints) && 
 			(![self caCertificateCheckComplete]))
 	{
         success = NO;
@@ -3676,17 +3704,33 @@ static NSOperationQueue *sharedQueue = nil;
 		SecTrustRef trust = NULL;
 		SecTrustCreateWithCertificates(streamCertificates, policy, &trust);
         
-        // Check that our trusted cert is in the list of certs from the connection
+        // Check that the fingerprint of the public key from our stream cert is in the set of trusted public key fingerprints
         CFIndex streamCertCount = SecTrustGetCertificateCount(trust);
         for (CFIndex i = 0; i < streamCertCount; i++) {
             SecCertificateRef streamCert = SecTrustGetCertificateAtIndex(trust, i);
+            
             NSData *certificateData = CFBridgingRelease(SecCertificateCopyData(streamCert));
-
-            if([trustedCerts containsObject:certificateData]) {
-                NSLog(@"Certificate matches a trusted source. SSL can proceed.");
+            const unsigned char *certificateDataBytes = (const unsigned char *)[certificateData bytes];
+            X509 *certificateX509 = d2i_X509(NULL, &certificateDataBytes, [certificateData length]);
+            NSData *publicKeyData = [ASIHTTPRequest certificateGeSubjectPublicKeyInfo:certificateX509];
+            X509_free(certificateX509);
+            
+            // Here is where we need to test the BASE64(SHA1(cert.rawPublicKey)) for inclusion in the set of trusted fingerprints            
+            unsigned char digest[SHA256_DIGEST_LENGTH];
+            SHA256([publicKeyData bytes], [publicKeyData length], digest); 
+            NSData *sha = [NSData dataWithBytes:digest length:sizeof(digest)];
+            NSString *fingerprint = [ASIHTTPRequest base64forData:sha];
+            
+            NSLog(@"Certificate Public Key:\n\n%@\n\ndigest:\n\n%@\n\nfingerprint:\n\n%@\n\n", publicKeyData, sha, fingerprint);
+                        
+            if([trustedPublicKeyFingerPrints containsObject:fingerprint]) {
+                NSLog(@"Certificate Public Key matches a trusted source. SSL can proceed.");
                 success = YES;
                 break;
             }
+            [sha release];
+            [publicKeyData release];
+            [fingerprint release];
             
         }
         
@@ -3701,7 +3745,7 @@ static NSOperationQueue *sharedQueue = nil;
 		[self setCaCertificateCheckComplete:YES];
 	}
 
-    if(!success) NSLog(@"Certificate doen't match any trusted source. SSL DENIED!");
+    if(!success) NSLog(@"Certificate doesn't match any trusted source. SSL DENIED!");
     
 	return success;
 }
@@ -4150,7 +4194,7 @@ static NSOperationQueue *sharedQueue = nil;
 	[newRequest setShouldRedirect:[self shouldRedirect]];
 	[newRequest setValidatesSecureCertificate:[self validatesSecureCertificate]];
     [newRequest setClientCertificateIdentity:clientCertificateIdentity];
-    [newRequest setTrustedCertificates:trustedCerts];
+    [newRequest setTrustedPublicKeyFingerprints:trustedPublicKeyFingerPrints];
 	[newRequest setClientCertificates:[[clientCertificates copy] autorelease]];
 	[newRequest setPACurl:[self PACurl]];
 	[newRequest setShouldPresentCredentialsBeforeChallenge:[self shouldPresentCredentialsBeforeChallenge]];
@@ -4190,17 +4234,17 @@ static NSOperationQueue *sharedQueue = nil;
 }
 
 
-#pragma mark ca certificate
+#pragma mark certificate pinning
 
-- (void)setTrustedCertificates:(NSSet *)certs {
-    if(trustedCerts) {
-        [trustedCerts release];
+- (void)setTrustedPublicKeyFingerprints:(NSSet *)fingerprints {
+    if(trustedPublicKeyFingerPrints) {
+        [trustedPublicKeyFingerPrints release];
     }
     
-    trustedCerts = certs;
+    trustedPublicKeyFingerPrints = fingerprints;
     
-	if (trustedCerts) {
-		[trustedCerts retain];
+	if (trustedPublicKeyFingerPrints) {
+		[trustedPublicKeyFingerPrints retain];
 	}
 }
 
