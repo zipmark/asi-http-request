@@ -3721,7 +3721,7 @@ static NSOperationQueue *sharedQueue = nil;
             NSData *sha = [NSData dataWithBytes:digest length:sizeof(digest)];
             NSString *fingerprint = [ASIHTTPRequest base64forData:sha];
             
-            NSLog(@"Certificate Public Key:\n\n%@\n\ndigest:\n\n%@\n\nfingerprint:\n\n%@\n\n", publicKeyData, sha, fingerprint);
+            //NSLog(@"Certificate Public Key:\n\n%@\n\ndigest:\n\n%@\n\nfingerprint:\n\n%@\n\n", publicKeyData, sha, fingerprint);
                         
             if([trustedPublicKeyFingerPrints containsObject:fingerprint]) {
                 NSLog(@"Certificate Public Key matches a trusted source. SSL can proceed.");
